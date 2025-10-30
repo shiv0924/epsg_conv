@@ -66,7 +66,8 @@ def create_map(gdf):
     # Calculate the center of the map
     try:
         # Use unary_union to get a single geometry, then find its centroid
-        center = gdf.geometry.unary_union.centroid
+        # FIX: Changed deprecated 'unary_union' to 'union_all()'
+        center = gdf.geometry.union_all().centroid
         map_center = [center.y, center.x]
         
         # Calculate appropriate zoom from total bounds
@@ -174,7 +175,8 @@ if process_button and uploaded_file is not None:
         
         if map_object:
             # 2. Display the map
-            st_folium(map_object, use_column_width=True, height=500)
+            # FIX: Changed 'use_column_width' to 'use_container_width'
+            st_folium(map_object, use_container_width=True, height=500)
 
             # 3. Display the legend *outside* the map using st.markdown
             if color_mapping:
@@ -210,3 +212,4 @@ elif process_button and uploaded_file is None:
 
 else:
     st.info("Upload a GeoJSON file and click 'Process File' to begin.")
+
