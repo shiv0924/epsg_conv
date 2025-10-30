@@ -66,7 +66,6 @@ def create_map(gdf):
     # Calculate the center of the map
     try:
         # Use unary_union to get a single geometry, then find its centroid
-        # FIX: Changed deprecated 'unary_union' to 'union_all()'
         center = gdf.geometry.union_all().centroid
         map_center = [center.y, center.x]
         
@@ -122,9 +121,6 @@ def create_map(gdf):
         )
     ).add_to(m)
 
-    # --- REMOVED LEGEND FROM HERE ---
-    # The legend is now created in the main app body.
-    
     # Return both the map and the color_map for the legend
     return m, color_map
 
@@ -134,6 +130,14 @@ st.set_page_config(layout="wide")
 st.title("🗺️ Interactive GeoJSON Dissolver")
 st.markdown("Upload a GeoJSON file to merge (dissolve) polygons based on a classification property (DN).")
 
+# --- Initialize Session State ---
+# This ensures our processed data persists across app re-runs
+if 'dissolved_gdf' not in st.session_state:
+    st.session_state.dissolved_gdf = None
+if 'original_gdf' not in st.session_state:
+    st.session_state.original_gdf = None
+
+
 # --- SIDEBAR for Inputs ---
 with st.sidebar:
     st.header("⚙️ Controls")
@@ -142,7 +146,16 @@ with st.sidebar:
     
     output_filename = st.text_input("2. Name your output file", "dissolved_land_use.geojson")
     
-    process_button = st.button("3. Process File", type="primary", use_container_width=True)
+    # When the button is pressed, process data and store it in session_state
+    if st.button("3. Process File", type="primary", use_container_width=True):
+        if uploaded_file is not None:
+            # Run processing and save results to session state
+            st.session_state.original_gdf, st.session_state.dissolved_gdf = process_data(uploaded_file, DN_TO_LULC_MAP)
+        else:
+            st.warning("Please upload a GeoJSON file first.")
+            # Clear any old results if no file is uploaded
+            st.session_state.original_gdf = None
+            st.session_state.dissolved_gdf = None
 
     with st.expander("About & Class Mappings", expanded=False):
         st.info(
@@ -155,61 +168,58 @@ with st.sidebar:
         st.json(DN_TO_LULC_MAP, expanded=False)
 
 # --- MAIN PAGE for Outputs ---
-if process_button and uploaded_file is not None:
-    # Run the main processing function
-    original_gdf, dissolved_gdf = process_data(uploaded_file, DN_TO_LULC_MAP)
+# Check session state (instead of button press) to decide if we show results
+if st.session_state.dissolved_gdf is not None and st.session_state.original_gdf is not None:
     
-    if original_gdf is not None and dissolved_gdf is not None:
-        st.header("📊 Summary")
-        col1, col2 = st.columns(2)
-        col1.metric("Original Features", len(original_gdf))
-        col2.metric("Dissolved Features", len(dissolved_gdf))
-        
-        st.header("🗺️ Map of Dissolved Features")
-        st.info("Hover over a polygon to see its land use class.")
-        
-        # --- MODIFIED MAP & LEGEND RENDERING ---
-        
-        # 1. Create map and get color map for legend
-        map_object, color_mapping = create_map(dissolved_gdf)
-        
-        if map_object:
-            # 2. Display the map
-            # FIX: Changed 'use_column_width' to 'use_container_width'
-            st_folium(map_object, use_container_width=True, height=500)
+    # Read the data from session state
+    original_gdf = st.session_state.original_gdf
+    dissolved_gdf = st.session_state.dissolved_gdf
 
-            # 3. Display the legend *outside* the map using st.markdown
-            if color_mapping:
-                st.subheader("Legend")
-                legend_html_parts = ['<div style="display: flex; flex-direction: column; gap: 5px;">']
-                for category, color in color_mapping.items():
-                    legend_html_parts.append(
-                        f'<div><span style="background-color:{color}; width:20px; height:20px; display:inline-block; margin-right:5px; border: 1px solid black; opacity: 0.7; vertical-align: middle;"></span>'
-                        f'<span style="vertical-align: middle;">{category}</span></div>'
-                    )
-                legend_html_parts.append('</div>')
-                st.markdown("".join(legend_html_parts), unsafe_allow_html=True)
-        
-        st.header("📥 Download Result")
-        # Convert dissolved GeoDataFrame to a string for download
-        try:
-            output_geojson_str = dissolved_gdf.to_json()
-            st.download_button(
-                label="Download Dissolved GeoJSON",
-                data=output_geojson_str,
-                file_name=output_filename,
-                mime="application/json"
-            )
-        except Exception as e:
-            st.error(f"Failed to prepare download file: {e}")
+    st.header("📊 Summary")
+    col1, col2 = st.columns(2)
+    col1.metric("Original Features", len(original_gdf))
+    col2.metric("Dissolved Features", len(dissolved_gdf))
+    
+    st.header("🗺️ Map of Dissolved Features")
+    st.info("Hover over a polygon to see its land use class.")
+    
+    # 1. Create map and get color map for legend
+    map_object, color_mapping = create_map(dissolved_gdf)
+    
+    if map_object:
+        # 2. Display the map
+        st_folium(map_object, use_container_width=True, height=500)
 
-        st.header("📂 Dissolved Data Preview")
-        # Show the data table (without the long 'geometry' column)
-        st.dataframe(dissolved_gdf.drop(columns='geometry').head())
-        
-elif process_button and uploaded_file is None:
-    st.warning("Please upload a GeoJSON file first.")
+        # 3. Display the legend *outside* the map using st.markdown
+        if color_mapping:
+            st.subheader("Legend")
+            legend_html_parts = ['<div style="display: flex; flex-direction: column; gap: 5px;">']
+            for category, color in color_mapping.items():
+                legend_html_parts.append(
+                    f'<div><span style="background-color:{color}; width:20px; height:20px; display:inline-block; margin-right:5px; border: 1px solid black; opacity: 0.7; vertical-align: middle;"></span>'
+                    f'<span style="vertical-align: middle;">{category}</span></div>'
+                )
+            legend_html_parts.append('</div>')
+            st.markdown("".join(legend_html_parts), unsafe_allow_html=True)
+    
+    st.header("📥 Download Result")
+    # Convert dissolved GeoDataFrame to a string for download
+    try:
+        output_geojson_str = dissolved_gdf.to_json()
+        st.download_button(
+            label="Download Dissolved GeoJSON",
+            data=output_geojson_str,
+            file_name=output_filename, # Read current value from text input
+            mime="application/json"
+        )
+    except Exception as e:
+        st.error(f"Failed to prepare download file: {e}")
 
+    st.header("📂 Dissolved Data Preview")
+    # Show the data table (without the long 'geometry' column)
+    st.dataframe(dissolved_gdf.drop(columns='geometry').head())
+    
 else:
+    # This is the default state (or if processing failed)
     st.info("Upload a GeoJSON file and click 'Process File' to begin.")
 
