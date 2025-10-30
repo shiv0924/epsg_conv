@@ -6,7 +6,6 @@ import io
 import branca.colormap as cm
 
 # --- CONFIGURATION ---
-# This map is now used by the processing function and displayed in the sidebar
 DN_TO_LULC_MAP = {
     1: 'Water',
     2: 'Tree Cover',
@@ -58,27 +57,38 @@ def process_data(uploaded_file, dn_map):
 def create_map(gdf):
     """
     Creates a Folium map with colored polygons based on 'land_use'.
+    Returns the map object and the color mapping.
     """
     if gdf.empty:
         st.warning("No data to display on map.")
-        return
+        return None, {}
 
     # Calculate the center of the map
     try:
+        # Use unary_union to get a single geometry, then find its centroid
         center = gdf.geometry.unary_union.centroid
         map_center = [center.y, center.x]
-        # Calculate appropriate zoom
+        
+        # Calculate appropriate zoom from total bounds
         min_lon, min_lat, max_lon, max_lat = gdf.total_bounds
         zoom = 10
-        if max_lon - min_lon > 0:
-             # A simple heuristic for zoom, can be improved
-            zoom = int(10 - (max_lon - min_lon) / 10)
+        
+        # Simple heuristic for zoom. Can be improved.
+        lon_diff = max_lon - min_lon
+        lat_diff = max_lat - min_lat
+        if lon_diff > 0 and lat_diff > 0:
+             # Fit map to bounds
+             m = folium.Map(tiles="CartoDB positron")
+             m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
+        else:
+             m = folium.Map(location=map_center, zoom_start=zoom, tiles="CartoDB positron")
             
-    except Exception:
+    except Exception as e:
+        st.warning(f"Could not calculate map center/zoom: {e}. Defaulting view.")
         map_center = [0, 0] # Default center
         zoom = 2
+        m = folium.Map(location=map_center, zoom_start=zoom, tiles="CartoDB positron")
 
-    m = folium.Map(location=map_center, zoom_start=zoom, tiles="CartoDB positron")
 
     # --- Create a color map for the land use classes ---
     categories = sorted(gdf['land_use'].unique())
@@ -111,24 +121,11 @@ def create_map(gdf):
         )
     ).add_to(m)
 
-    # --- Add a custom HTML Legend ---
-    legend_html = '''
-    <div style="
-        position: fixed; 
-        bottom: 50px; left: 50px; width: 150px; height: auto; 
-        background-color: white; border:2px solid grey; z-index:9999; 
-        font-size:14px; border-radius: 8px; padding: 10px;
-        ">
-    <h4 style="margin-top:0; margin-bottom:10px;">Land Use</h4>
-    '''
-    for category, color in color_map.items():
-        legend_html += f'<i style="background:{color}; width:20px; height:20px; float:left; margin-right:5px; border: 1px solid black; opacity: 0.7;"></i> {category}<br>'
-    legend_html += '</div>'
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-
-    # Display the map in Streamlit
-    st_folium(m, use_column_width=True, height=500)
+    # --- REMOVED LEGEND FROM HERE ---
+    # The legend is now created in the main app body.
+    
+    # Return both the map and the color_map for the legend
+    return m, color_map
 
 # --- STREAMLIT APP LAYOUT ---
 
@@ -169,8 +166,27 @@ if process_button and uploaded_file is not None:
         
         st.header("🗺️ Map of Dissolved Features")
         st.info("Hover over a polygon to see its land use class.")
-        # Create and display the map
-        create_map(dissolved_gdf)
+        
+        # --- MODIFIED MAP & LEGEND RENDERING ---
+        
+        # 1. Create map and get color map for legend
+        map_object, color_mapping = create_map(dissolved_gdf)
+        
+        if map_object:
+            # 2. Display the map
+            st_folium(map_object, use_column_width=True, height=500)
+
+            # 3. Display the legend *outside* the map using st.markdown
+            if color_mapping:
+                st.subheader("Legend")
+                legend_html_parts = ['<div style="display: flex; flex-direction: column; gap: 5px;">']
+                for category, color in color_mapping.items():
+                    legend_html_parts.append(
+                        f'<div><span style="background-color:{color}; width:20px; height:20px; display:inline-block; margin-right:5px; border: 1px solid black; opacity: 0.7; vertical-align: middle;"></span>'
+                        f'<span style="vertical-align: middle;">{category}</span></div>'
+                    )
+                legend_html_parts.append('</div>')
+                st.markdown("".join(legend_html_parts), unsafe_allow_html=True)
         
         st.header("📥 Download Result")
         # Convert dissolved GeoDataFrame to a string for download
